@@ -44,11 +44,14 @@ static unsigned int pidhash_shift = 4;
 struct pid init_struct_pid = INIT_STRUCT_PID;
 
 int pid_max = PID_MAX_DEFAULT;
+EXPORT_SYMBOL_GPL(pid_max);
 
 #define RESERVED_PIDS		300
 
 int pid_max_min = RESERVED_PIDS + 1;
 int pid_max_max = PID_MAX_LIMIT;
+EXPORT_SYMBOL_GPL(pid_max_min);
+EXPORT_SYMBOL_GPL(pid_max_max);
 
 #define BITS_PER_PAGE		(PAGE_SIZE*8)
 #define BITS_PER_PAGE_MASK	(BITS_PER_PAGE-1)

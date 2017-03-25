@@ -1,0 +1,1 @@
+#define CHRONOS_VERSION_STRING "3.0"

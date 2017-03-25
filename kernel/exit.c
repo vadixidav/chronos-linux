@@ -51,6 +51,7 @@
 #include <trace/events/sched.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/oom.h>
+#include <linux/chronos_sched.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -142,7 +143,7 @@ static void __exit_signal(struct task_struct *tsk)
 	 * Do this under ->siglock, we can race with another thread
 	 * doing sigqueue_free() if we have SIGQUEUE_PREALLOC signals.
 	 */
-	flush_sigqueue(&tsk->pending);
+	flush_task_sigqueue(tsk);
 	tsk->sighand = NULL;
 	spin_unlock(&sighand->siglock);
 
@@ -926,6 +927,15 @@ NORET_TYPE void do_exit(long code)
 	tracehook_report_exit(&code);
 
 	validate_creds_for_do_exit(tsk);
+
+#ifdef CONFIG_CHRONOS
+#ifdef CONFIG_DEBUG_CHRONOS
+	if (WARN(tsk->policy == SCHED_CHRONOS, "ChronOS task exiting without ending scheduling segment\n"))
+#else
+	if (tsk->policy == SCHED_CHRONOS)
+#endif
+		exit_chronos(tsk);
+#endif
 
 	/*
 	 * We're taking recursive faults here in do_exit. Safest is to just

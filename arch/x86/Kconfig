@@ -63,6 +63,7 @@ config X86
 	select HAVE_TEXT_POKE_SMP
 	select HAVE_GENERIC_HARDIRQS
 	select HAVE_SPARSE_IRQ
+	select HAVE_CHRONOS_ARCH_SUPPORT
 	select GENERIC_FIND_FIRST_BIT
 	select GENERIC_IRQ_PROBE
 	select GENERIC_PENDING_IRQ if SMP
@@ -152,10 +153,10 @@ config ARCH_MAY_HAVE_PC_FDC
 	def_bool ISA_DMA_API
 
 config RWSEM_GENERIC_SPINLOCK
-	def_bool !X86_XADD
+	def_bool !X86_XADD || PREEMPT_RT_FULL
 
 config RWSEM_XCHGADD_ALGORITHM
-	def_bool X86_XADD
+	def_bool X86_XADD && !RWSEM_GENERIC_SPINLOCK && !PREEMPT_RT_FULL
 
 config ARCH_HAS_CPU_IDLE_WAIT
 	def_bool y
@@ -2166,3 +2167,5 @@ source "crypto/Kconfig"
 source "arch/x86/kvm/Kconfig"
 
 source "lib/Kconfig"
+
+source "kernel/Kconfig.chronos"

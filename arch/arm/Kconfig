@@ -28,7 +28,9 @@ config ARM
 	select HAVE_C_RECORDMCOUNT
 	select HAVE_GENERIC_HARDIRQS
 	select HAVE_SPARSE_IRQ
+	select HAVE_CHRONOS_ARCH_SUPPORT
 	select GENERIC_IRQ_SHOW
+	select IRQ_FORCED_THREADING
 	help
 	  The ARM series is a line of low-power-consumption RISC chip designs
 	  licensed by ARM Ltd and targeted at embedded applications and
@@ -1536,7 +1538,7 @@ config HAVE_ARCH_PFN_VALID
 
 config HIGHMEM
 	bool "High Memory Support"
-	depends on MMU
+	depends on MMU && !PREEMPT_RT_FULL
 	help
 	  The address space of ARM processors is only 4 Gigabytes large
 	  and it has to accommodate user address space, kernel address
@@ -2066,3 +2068,5 @@ source "security/Kconfig"
 source "crypto/Kconfig"
 
 source "lib/Kconfig"
+
+source "kernel/Kconfig.chronos"

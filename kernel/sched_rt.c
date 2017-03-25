@@ -2,7 +2,16 @@
  * Real-Time Scheduling Class (mapped to the SCHED_FIFO and SCHED_RR
  * policies)
  */
+#include <linux/chronos_sched.h>
 
+#ifdef CONFIG_SMP
+static int pick_rt_task(struct rq *rq, struct task_struct *p, int cpu);
+static void deactivate_task(struct rq *rq, struct task_struct *p, int sleep);
+#endif
+
+#ifdef CONFIG_CHRONOS
+static int rq_sort_key(struct rq *rq);
+#endif
 #ifdef CONFIG_RT_GROUP_SCHED
 
 #define rt_entity_is_task(rt_se) (!(rt_se)->my_q)
@@ -128,6 +137,12 @@ static void enqueue_pushable_task(struct rq *rq, struct task_struct *p)
 {
 	plist_del(&p->pushable_tasks, &rq->rt.pushable_tasks);
 	plist_node_init(&p->pushable_tasks, p->prio);
+
+#ifdef CONFIG_CHRONOS
+	if(p->policy == SCHED_CHRONOS)
+		return;
+#endif
+
 	plist_add(&p->pushable_tasks, &rq->rt.pushable_tasks);
 }
 
@@ -536,6 +551,9 @@ static int balance_runtime(struct rt_rq *rt_rq)
 {
 	int more = 0;
 
+	if (!sched_feat(RT_RUNTIME_SHARE))
+		return more;
+
 	if (rt_rq->rt_time > rt_rq->rt_runtime) {
 		raw_spin_unlock(&rt_rq->rt_runtime_lock);
 		more = do_balance_runtime(rt_rq);
@@ -553,11 +571,8 @@ static inline int balance_runtime(struct rt_rq *rt_rq)
 
 static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 {
-	int i, idle = 1;
+	int i, idle = 1, throttled = 0;
 	const struct cpumask *span;
-
-	if (!rt_bandwidth_enabled() || rt_b->rt_runtime == RUNTIME_INF)
-		return 1;
 
 	span = sched_rt_period_mask();
 	for_each_cpu(i, span) {
@@ -593,11 +608,16 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 			if (!rt_rq_throttled(rt_rq))
 				enqueue = 1;
 		}
+		if (rt_rq->rt_throttled)
+			throttled = 1;
 
 		if (enqueue)
 			sched_rt_rq_enqueue(rt_rq);
 		raw_spin_unlock(&rq->lock);
 	}
+
+	if (!throttled && (!rt_bandwidth_enabled() || rt_b->rt_runtime == RUNTIME_INF))
+		return 1;
 
 	return idle;
 }
@@ -630,7 +650,24 @@ static int sched_rt_runtime_exceeded(struct rt_rq *rt_rq)
 		return 0;
 
 	if (rt_rq->rt_time > runtime) {
-		rt_rq->rt_throttled = 1;
+		struct rt_bandwidth *rt_b = sched_rt_bandwidth(rt_rq);
+
+		/*
+		 * Don't actually throttle groups that have no runtime assigned
+		 * but accrue some time due to boosting.
+		 */
+		if (likely(rt_b->rt_runtime)) {
+			rt_rq->rt_throttled = 1;
+			printk_once(KERN_WARNING "sched: RT throttling activated\n");
+		} else {
+			/*
+			 * In case we did anyway, make it go away,
+			 * replenishment is a joke, since it will replenish us
+			 * with exactly 0 ns.
+			 */
+			rt_rq->rt_time = 0;
+		}
+
 		if (rt_rq_throttled(rt_rq)) {
 			sched_rt_rq_dequeue(rt_rq);
 			return 1;
@@ -658,7 +695,8 @@ static void update_curr_rt(struct rq *rq)
 	if (unlikely((s64)delta_exec < 0))
 		delta_exec = 0;
 
-	schedstat_set(curr->se.statistics.exec_max, max(curr->se.statistics.exec_max, delta_exec));
+	schedstat_set(curr->se.statistics.exec_max,
+		      max(curr->se.statistics.exec_max, delta_exec));
 
 	curr->se.sum_exec_runtime += delta_exec;
 	account_group_exec_runtime(curr, delta_exec);
@@ -937,6 +975,41 @@ static void dequeue_rt_entity(struct sched_rt_entity *rt_se)
 /*
  * Adding/removing a task to/from a priority array:
  */
+#ifdef CONFIG_CHRONOS
+static void enqueue_chronos(struct rq *rq, struct task_struct *p)
+{
+	insert_on_local_queue(&p->rtinfo, rq->rt.chronos_queue + p->prio, rq_sort_key(rq));
+}
+
+static void dequeue_chronos(struct task_struct *p)
+{
+	list_del_init(&p->rtinfo.task_list[LOCAL_LIST]);
+}
+
+static void requeue_chronos(struct rq *rq, struct task_struct *p, int head)
+{
+	struct list_head *queue = rq->rt.chronos_queue + p->prio;
+	struct list_head *task = &p->rtinfo.task_list[LOCAL_LIST];
+	if (!list_empty(task) && (rq_sort_key(rq) == SORT_KEY_NONE)) {
+		if (head)
+			list_move(task, queue);
+		else
+			list_move_tail(task, queue);
+	}
+}
+
+static int rq_sort_key(struct rq *rq)
+{
+	return rq->rt.chronos_local->base.sort_key;
+}
+
+/* Handle removing the task from the ChronOS global queue from do_exit() */
+void exit_chronos(struct task_struct *t) {
+	struct global_sched_domain *domain = task_rq(t)->rt.chronos_global;
+	test_remove_task_global(&t->rtinfo, domain);
+}
+#endif
+
 static void
 enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 {
@@ -946,6 +1019,11 @@ enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 		rt_se->timeout = 0;
 
 	enqueue_rt_entity(rt_se, flags & ENQUEUE_HEAD);
+
+#ifdef CONFIG_CHRONOS
+	if(p->policy == SCHED_CHRONOS)
+		enqueue_chronos(rq, p);
+#endif
 
 	if (!task_current(rq, p) && p->rt.nr_cpus_allowed > 1)
 		enqueue_pushable_task(rq, p);
@@ -959,6 +1037,10 @@ static void dequeue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 	dequeue_rt_entity(rt_se);
 
 	dequeue_pushable_task(rq, p);
+#ifdef CONFIG_CHRONOS
+	if(p->policy == SCHED_CHRONOS)
+		dequeue_chronos(p);
+#endif
 }
 
 /*
@@ -1101,6 +1183,116 @@ static void check_preempt_curr_rt(struct rq *rq, struct task_struct *p, int flag
 #endif
 }
 
+#ifdef CONFIG_CHRONOS
+static int chronos_lock_balance(struct rq *this_rq, struct rq *busiest)
+	__releases(this_rq->lock)
+	__acquires(busiest->lock)
+	__acquires(this_rq->lock)
+{
+	int ret = 0;
+
+	if (unlikely(!raw_spin_trylock(&busiest->lock))) {
+		if (busiest < this_rq) {
+			raw_spin_unlock(&this_rq->lock);
+			raw_spin_lock(&busiest->lock);
+			raw_spin_lock_nested(&this_rq->lock, SINGLE_DEPTH_NESTING);
+			ret = 1;
+		} else
+			raw_spin_lock_nested(&busiest->lock, SINGLE_DEPTH_NESTING);
+	}
+	return ret;
+}
+
+static struct task_struct * _pull_global_task(struct rq *this_rq, struct task_struct *t)
+{
+	int this_cpu = cpu_of(this_rq), src_cpu = task_cpu(t);
+	struct rq *src_rq = cpu_rq(src_cpu);
+
+	if(src_cpu == this_cpu) {
+		if (!t->on_rq)
+			t = NULL;
+		goto out;
+	}
+
+	chronos_lock_balance(this_rq, src_rq);
+
+	/* If the task has started running, been pulled by another processor,
+	 * or isn't on a runqueue, don't pull it */
+	if((task_cpu(t) != src_cpu) || !pick_rt_task(src_rq, t, this_cpu) || !t->on_rq) {
+		cschedstat_inc(this_rq, task_pull_failed);
+		t = NULL;
+		goto unlock;
+	}
+
+	cschedstat_inc(this_rq, task_pulled_to);
+	cschedstat_inc(src_rq, task_pulled_from);
+
+	deactivate_task(src_rq, t, 0);
+	set_task_cpu(t, this_cpu);
+	t->rtinfo.cpu = this_cpu;
+	activate_task(this_rq, t, 0);
+
+unlock:
+	double_unlock_balance(this_rq, src_rq);
+
+out:
+	if (t)
+		requeue_chronos(this_rq, t, 1);
+
+	return t;
+}
+
+static struct task_struct * pull_global_task(struct rq *this_rq)
+{
+	int this_cpu = cpu_of(this_rq);
+	struct task_struct *t = per_cpu(global_task, this_cpu);
+
+	if(t) {
+		per_cpu(global_task, this_cpu) = NULL;
+		return _pull_global_task(this_rq, t);
+	}
+
+	return NULL;
+}
+
+static struct rt_info * preschedule_global(struct global_sched_domain *domain,
+			struct list_head *queue, int prio, int chronos_prio)
+{
+	struct rt_sched_global *global = domain->scheduler;
+
+	if(prio != chronos_prio)
+		return NULL;
+
+	return global->preschedule(queue);
+}
+
+/*
+ * The main global scheduling function
+ */
+static struct task_struct * schedule_global(struct global_sched_domain *domain,
+						struct rq *rq)
+{
+	struct rt_info *best;
+	struct rt_sched_global *global = domain->scheduler;
+	struct rt_sched_arch *arch = global->arch;
+
+	/* arch_init will return 1 if this CPU needs to schedule globally,
+	 * and 0 if it does not (such as in STW scheduling, if another CPU
+	 * has already scheduled). */
+	if(arch->arch_init(domain, atomic_read(&rq->must_block))) {
+		if(has_global_tasks(domain)) {
+			best = global->schedule(&domain->global_task_list, domain);
+			arch->map_tasks(best, domain);
+			cschedstat_inc(rq, sched_count_global);
+		}
+		arch->arch_release(domain);
+	} else
+		cschedstat_inc(rq, sched_count_block);
+
+	return pull_global_task(rq);
+}
+#endif
+
 static struct sched_rt_entity *pick_next_rt_entity(struct rq *rq,
 						   struct rt_rq *rt_rq)
 {
@@ -1108,10 +1300,48 @@ static struct sched_rt_entity *pick_next_rt_entity(struct rq *rq,
 	struct sched_rt_entity *next = NULL;
 	struct list_head *queue;
 	int idx;
-
+#ifdef CONFIG_CHRONOS
+	struct global_sched_domain *domain = rt_rq->chronos_global;
+	struct list_head *rt_queue;
+	struct rt_info *p;
+	int flags, chronos_prio = get_global_chronos_sys_prio(domain);
+#endif
 	idx = sched_find_first_bit(array->bitmap);
 	BUG_ON(idx >= MAX_RT_PRIO);
+#ifdef CONFIG_CHRONOS
+	rt_queue = rt_rq->chronos_queue + idx;
 
+	if(chronos_prio > idx)
+		goto local;
+
+	/* Preschedule for the global schedule */
+	p = preschedule_global(domain, rt_queue, idx, chronos_prio);
+	if(p) {
+		cschedstat_inc(rq, sched_count_presched);
+		requeue_chronos(rq, task_of_rtinfo(p), 1);
+		goto local;
+	}
+
+	/* Global scheduling */
+	if(global_tasks(domain))
+		schedule_global(domain, rq);
+
+	if(!rt_rq->rt_nr_running)
+		return NULL;
+
+	idx = sched_find_first_bit(array->bitmap);
+	rt_queue = rt_rq->chronos_queue + idx;
+
+local:	/* Locally schedule tasks */
+	if(!list_empty(rt_queue)) {
+		cschedstat_inc(rq, sched_count_local);
+		flags = rt_rq->chronos_local->flags;
+		p = rt_rq->chronos_local->schedule(rt_queue, flags);
+		if(unlikely(!p))
+			return NULL;
+		requeue_task_rt(rq, task_of_rtinfo(p), 1);
+	}
+#endif
 	queue = array->queue + idx;
 	next = list_entry(queue->next, struct sched_rt_entity, run_list);
 
@@ -1121,24 +1351,40 @@ static struct sched_rt_entity *pick_next_rt_entity(struct rq *rq,
 static struct task_struct *_pick_next_task_rt(struct rq *rq)
 {
 	struct sched_rt_entity *rt_se;
-	struct task_struct *p;
-	struct rt_rq *rt_rq;
-
-	rt_rq = &rq->rt;
-
-	if (unlikely(!rt_rq->rt_nr_running))
-		return NULL;
+	struct task_struct *p = NULL;
+	struct rt_rq *rt_rq = &rq->rt;
+#ifdef CONFIG_CHRONOS
+	struct global_sched_domain *domain = rt_rq->chronos_global;
+#endif
+	if (unlikely(!rt_rq->rt_nr_running)) {
+#ifdef CONFIG_CHRONOS
+		if(global_tasks(domain)) {
+			p = schedule_global(domain, rq);
+			if(p)
+				goto out;
+		}
+#endif
+		return p;
+	}
 
 	if (rt_rq_throttled(rt_rq))
 		return NULL;
 
 	do {
 		rt_se = pick_next_rt_entity(rq, rt_rq);
-		BUG_ON(!rt_se);
+
+		if(!rt_se)
+			return NULL;
+
 		rt_rq = group_rt_rq(rt_se);
 	} while (rt_rq);
 
 	p = rt_task_of(rt_se);
+#ifdef CONFIG_CHRONOS
+out:
+	if(p->policy == SCHED_CHRONOS)
+		p->rtinfo.cpu = cpu_of(rq);
+#endif
 	p->se.exec_start = rq->clock_task;
 
 	return p;
@@ -1181,12 +1427,10 @@ static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 /* Only try algorithms three times */
 #define RT_MAX_TRIES 3
 
-static void deactivate_task(struct rq *rq, struct task_struct *p, int sleep);
-
 static int pick_rt_task(struct rq *rq, struct task_struct *p, int cpu)
 {
 	if (!task_running(rq, p) &&
-	    (cpu < 0 || cpumask_test_cpu(cpu, &p->cpus_allowed)) &&
+	    (cpu < 0 || cpumask_test_cpu(cpu, tsk_cpus_allowed(p))) &&
 	    (p->rt.nr_cpus_allowed > 1))
 		return 1;
 	return 0;
@@ -1331,7 +1575,7 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 			 */
 			if (unlikely(task_rq(task) != rq ||
 				     !cpumask_test_cpu(lowest_rq->cpu,
-						       &task->cpus_allowed) ||
+						       tsk_cpus_allowed(task)) ||
 				     task_running(rq, task) ||
 				     !task->on_rq)) {
 
@@ -1364,6 +1608,7 @@ static struct task_struct *pick_next_pushable_task(struct rq *rq)
 			      struct task_struct, pushable_tasks);
 
 	BUG_ON(rq->cpu != task_cpu(p));
+	BUG_ON(p->policy == SCHED_CHRONOS);
 	BUG_ON(task_current(rq, p));
 	BUG_ON(p->rt.nr_cpus_allowed <= 1);
 
@@ -1531,6 +1776,9 @@ static int pull_rt_task(struct rq *this_rq)
 			if (p->prio < src_rq->curr->prio)
 				goto skip;
 
+			if(p->policy == SCHED_CHRONOS)
+				goto skip;
+
 			ret = 1;
 
 			deactivate_task(src_rq, p, 0);
@@ -1619,9 +1867,6 @@ static void set_cpus_allowed_rt(struct task_struct *p,
 
 		update_rt_migration(&rq->rt);
 	}
-
-	cpumask_copy(&p->cpus_allowed, new_mask);
-	p->rt.nr_cpus_allowed = weight;
 }
 
 /* Assumes rq->lock is held */

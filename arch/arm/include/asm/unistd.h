@@ -402,6 +402,9 @@
 #define __NR_syncfs			(__NR_SYSCALL_BASE+373)
 #define __NR_sendmmsg			(__NR_SYSCALL_BASE+374)
 #define __NR_setns			(__NR_SYSCALL_BASE+375)
+#define __NR_do_rt_seg			(__NR_SYSCALL_BASE+376)
+#define __NR_do_chronos_mutex		(__NR_SYSCALL_BASE+377)
+#define __NR_set_scheduler		(__NR_SYSCALL_BASE+378)
 
 /*
  * The following SWIs are ARM private.

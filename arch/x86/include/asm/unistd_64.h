@@ -681,6 +681,12 @@ __SYSCALL(__NR_syncfs, sys_syncfs)
 __SYSCALL(__NR_sendmmsg, sys_sendmmsg)
 #define __NR_setns				308
 __SYSCALL(__NR_setns, sys_setns)
+#define __NR_do_rt_seg				309
+__SYSCALL(__NR_do_rt_seg, sys_do_rt_seg)
+#define __NR_do_chronos_mutex			310
+__SYSCALL(__NR_do_chronos_mutex, sys_do_chronos_mutex)
+#define __NR_set_scheduler			311
+__SYSCALL(__NR_set_scheduler, sys_set_scheduler)
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

@@ -75,6 +75,7 @@ struct file_handle;
 #include <linux/quota.h>
 #include <linux/key.h>
 #include <trace/syscall.h>
+#include <linux/chronos_types.h>
 
 #define __SC_DECL1(t1, a1)	t1 a1
 #define __SC_DECL2(t2, a2, ...) t2 a2, __SC_DECL1(__VA_ARGS__)
@@ -828,6 +829,9 @@ asmlinkage long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
 				  u64 mask, int fd,
 				  const char  __user *pathname);
 asmlinkage long sys_syncfs(int fd);
+asmlinkage long sys_do_rt_seg(int op, struct rt_data __user *data);
+asmlinkage long sys_do_chronos_mutex(struct mutex_data __user *mutexreq, int op);
+asmlinkage long sys_set_scheduler(int rt_sched, int prio, unsigned int len, unsigned long __user *user_mask_ptr);
 
 int kernel_execve(const char *filename, const char *const argv[], const char *const envp[]);
 

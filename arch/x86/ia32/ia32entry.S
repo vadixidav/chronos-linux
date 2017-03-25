@@ -850,4 +850,7 @@ ia32_sys_call_table:
 	.quad sys_syncfs
 	.quad compat_sys_sendmmsg	/* 345 */
 	.quad sys_setns
+	.quad sys_do_rt_seg
+	.quad sys_do_chronos_mutex
+	.quad sys_set_scheduler
 ia32_syscall_end:

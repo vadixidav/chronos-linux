@@ -39,6 +39,7 @@
 #define SCHED_BATCH		3
 /* SCHED_ISO: reserved but not implemented yet */
 #define SCHED_IDLE		5
+#define SCHED_CHRONOS		6
 /* Can be ORed in to make sure the process is reverted back to SCHED_NORMAL on fork */
 #define SCHED_RESET_ON_FORK     0x40000000
 
@@ -63,6 +64,7 @@ struct sched_param {
 #include <linux/nodemask.h>
 #include <linux/mm_types.h>
 
+#include <asm/kmap_types.h>
 #include <asm/system.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
@@ -90,8 +92,11 @@ struct sched_param {
 #include <linux/task_io_accounting.h>
 #include <linux/latencytop.h>
 #include <linux/cred.h>
+#include <linux/hardirq.h>
 
 #include <asm/processor.h>
+
+#include <linux/chronos_types.h>
 
 struct exec_domain;
 struct futex_pi_state;
@@ -221,10 +226,22 @@ extern char ___assert_task_state[1 - 2*!!(
 				((task->state & TASK_UNINTERRUPTIBLE) != 0 && \
 				 (task->flags & PF_FREEZING) == 0)
 
+/* Make sure no ChronOS tasks block inside their RT segments */
+#ifdef CONFIG_DEBUG_CHRONOS
+#define warn_chronos_blocking(tsk, state_value)		\
+	WARN((tsk)->policy == SCHED_CHRONOS &&		\
+	((state_value) == TASK_INTERRUPTIBLE || (state_value) == TASK_UNINTERRUPTIBLE),	\
+	"ChronOS task blocking inside RT segment\n")
+#else
+#define warn_chronos_blocking(tsk, state_value) do { } while (0)
+#endif
+
 #define __set_task_state(tsk, state_value)		\
-	do { (tsk)->state = (state_value); } while (0)
+	do { (tsk)->state = (state_value);		\
+	warn_chronos_blocking((tsk), (state_value)); } while (0)
 #define set_task_state(tsk, state_value)		\
-	set_mb((tsk)->state, (state_value))
+	do { set_mb((tsk)->state, (state_value));	\
+	warn_chronos_blocking((tsk), (state_value)); } while (0)
 
 /*
  * set_current_state() includes a barrier so that the write of current->state
@@ -238,9 +255,11 @@ extern char ___assert_task_state[1 - 2*!!(
  * If the caller does not need such serialisation then use __set_current_state()
  */
 #define __set_current_state(state_value)			\
-	do { current->state = (state_value); } while (0)
+	do { current->state = (state_value);		\
+	warn_chronos_blocking(current, (state_value)); } while (0)
 #define set_current_state(state_value)		\
-	set_mb(current->state, (state_value))
+	do { set_mb(current->state, (state_value));	\
+	warn_chronos_blocking(current, (state_value)); } while (0)
 
 /* Task command name length */
 #define TASK_COMM_LEN 16
@@ -358,7 +377,9 @@ extern signed long schedule_timeout(signed long timeout);
 extern signed long schedule_timeout_interruptible(signed long timeout);
 extern signed long schedule_timeout_killable(signed long timeout);
 extern signed long schedule_timeout_uninterruptible(signed long timeout);
+void force_sched_event(struct task_struct *p);
 asmlinkage void schedule(void);
+extern void schedule_preempt_disabled(void);
 extern int mutex_spin_on_owner(struct mutex *lock, struct task_struct *owner);
 
 struct nsproxy;
@@ -510,7 +531,7 @@ struct task_cputime {
 struct thread_group_cputimer {
 	struct task_cputime cputime;
 	int running;
-	spinlock_t lock;
+	raw_spinlock_t lock;
 };
 
 #include <linux/rwsem.h>
@@ -1070,6 +1091,7 @@ struct sched_domain;
 #define WF_SYNC		0x01		/* waker goes to sleep after wakup */
 #define WF_FORK		0x02		/* child wakeup after fork */
 #define WF_MIGRATED	0x04		/* internal use, task got migrated */
+#define WF_LOCK_SLEEPER	0x08		/* wakeup spinlock "sleeper" */
 
 #define ENQUEUE_WAKEUP		1
 #define ENQUEUE_HEAD		2
@@ -1219,6 +1241,7 @@ enum perf_event_task_context {
 
 struct task_struct {
 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
+	volatile long saved_state;	/* saved state for "spinlock sleepers" */
 	void *stack;
 	atomic_t usage;
 	unsigned int flags;	/* per process flags, defined below */
@@ -1255,14 +1278,17 @@ struct task_struct {
 #endif
 
 	unsigned int policy;
+#ifdef CONFIG_PREEMPT_RT_FULL
+	int migrate_disable;
+#ifdef CONFIG_SCHED_DEBUG
+	int migrate_disable_atomic;
+#endif
+#endif
 	cpumask_t cpus_allowed;
 
 #ifdef CONFIG_PREEMPT_RCU
 	int rcu_read_lock_nesting;
 	char rcu_read_unlock_special;
-#if defined(CONFIG_RCU_BOOST) && defined(CONFIG_TREE_PREEMPT_RCU)
-	int rcu_boosted;
-#endif /* #if defined(CONFIG_RCU_BOOST) && defined(CONFIG_TREE_PREEMPT_RCU) */
 	struct list_head rcu_node_entry;
 #endif /* #ifdef CONFIG_PREEMPT_RCU */
 #ifdef CONFIG_TREE_PREEMPT_RCU
@@ -1356,6 +1382,9 @@ struct task_struct {
 
 	struct task_cputime cputime_expires;
 	struct list_head cpu_timers[3];
+#ifdef CONFIG_PREEMPT_RT_BASE
+	struct task_struct *posix_timer_list;
+#endif
 
 /* process credentials */
 	const struct cred __rcu *real_cred; /* objective and real subjective task
@@ -1389,10 +1418,15 @@ struct task_struct {
 /* signal handlers */
 	struct signal_struct *signal;
 	struct sighand_struct *sighand;
+	struct sigqueue *sigqueue_cache;
 
 	sigset_t blocked, real_blocked;
 	sigset_t saved_sigmask;	/* restored if set_restore_sigmask() was used */
 	struct sigpending pending;
+#ifdef CONFIG_PREEMPT_RT_FULL
+	/* TODO: move me into ->restart_block ? */
+	struct siginfo forced_info;
+#endif
 
 	unsigned long sas_ss_sp;
 	size_t sas_ss_size;
@@ -1431,6 +1465,9 @@ struct task_struct {
 #ifdef CONFIG_DEBUG_MUTEXES
 	/* mutex deadlock detection */
 	struct mutex_waiter *blocked_on;
+#endif
+#ifdef CONFIG_PREEMPT_RT_FULL
+	int pagefault_disabled;
 #endif
 #ifdef CONFIG_TRACE_IRQFLAGS
 	unsigned int irq_events;
@@ -1558,6 +1595,12 @@ struct task_struct {
 	unsigned long trace;
 	/* bitmask and counter of trace recursion */
 	unsigned long trace_recursion;
+#ifdef CONFIG_WAKEUP_LATENCY_HIST
+	u64 preempt_timestamp_hist;
+#ifdef CONFIG_MISSED_TIMER_OFFSETS_HIST
+	unsigned long timer_offset;
+#endif
+#endif
 #endif /* CONFIG_TRACING */
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR /* memcg uses this to do batch job */
 	struct memcg_batch_info {
@@ -1570,10 +1613,38 @@ struct task_struct {
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 	atomic_t ptrace_bp_refcnt;
 #endif
+#ifdef CONFIG_PREEMPT_RT_BASE
+	struct rcu_head put_rcu;
+	int softirq_nestcnt;
+#endif
+#if defined CONFIG_PREEMPT_RT_FULL && defined CONFIG_HIGHMEM
+	int kmap_idx;
+	pte_t kmap_pte[KM_TYPE_NR];
+#endif
+#ifdef CONFIG_CHRONOS
+	/* Real time information for the task */
+	struct rt_info rtinfo;
+#endif
 };
 
-/* Future-safe accessor for struct task_struct's cpus_allowed. */
-#define tsk_cpus_allowed(tsk) (&(tsk)->cpus_allowed)
+#ifdef CONFIG_PREEMPT_RT_FULL
+static inline bool cur_pf_disabled(void) { return current->pagefault_disabled; }
+#else
+static inline bool cur_pf_disabled(void) { return false; }
+#endif
+
+static inline bool pagefault_disabled(void)
+{
+	return in_atomic() || cur_pf_disabled();
+}
+
+#ifdef CONFIG_CHRONOS
+void clear_chronos_scheduler(int cpu);
+int set_scheduler_mask_user(struct rt_sched_local *l, struct rt_sched_global *g,
+	unsigned int len, unsigned long __user *user_mask_ptr, int prio);
+int set_scheduler_mask(struct rt_sched_local *l, struct rt_sched_global *g,
+	cpumask_var_t new_mask, int prio);
+#endif
 
 /*
  * Priority of a process goes from 0..MAX_PRIO-1, valid RT
@@ -1743,6 +1814,15 @@ extern struct pid *cad_pid;
 extern void free_task(struct task_struct *tsk);
 #define get_task_struct(tsk) do { atomic_inc(&(tsk)->usage); } while(0)
 
+#ifdef CONFIG_PREEMPT_RT_BASE
+extern void __put_task_struct_cb(struct rcu_head *rhp);
+
+static inline void put_task_struct(struct task_struct *t)
+{
+	if (atomic_dec_and_test(&t->usage))
+		call_rcu(&t->put_rcu, __put_task_struct_cb);
+}
+#else
 extern void __put_task_struct(struct task_struct *t);
 
 static inline void put_task_struct(struct task_struct *t)
@@ -1750,6 +1830,7 @@ static inline void put_task_struct(struct task_struct *t)
 	if (atomic_dec_and_test(&t->usage))
 		__put_task_struct(t);
 }
+#endif
 
 extern void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st);
 extern void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st);
@@ -1774,6 +1855,7 @@ extern void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *
 #define PF_FROZEN	0x00010000	/* frozen for system suspend */
 #define PF_FSTRANS	0x00020000	/* inside a filesystem transaction */
 #define PF_KSWAPD	0x00040000	/* I am kswapd */
+#define PF_STOMPER	0x00080000	/* I am a stomp machine thread */
 #define PF_LESS_THROTTLE 0x00100000	/* Throttle me less: I clean memory */
 #define PF_KTHREAD	0x00200000	/* I am a kernel thread */
 #define PF_RANDOMIZE	0x00400000	/* randomize virtual address space */
@@ -2021,15 +2103,27 @@ static inline void sched_autogroup_exit(struct signal_struct *sig) { }
 #endif
 
 #ifdef CONFIG_RT_MUTEXES
+extern void task_setprio(struct task_struct *p, int prio);
 extern int rt_mutex_getprio(struct task_struct *p);
-extern void rt_mutex_setprio(struct task_struct *p, int prio);
+static inline void rt_mutex_setprio(struct task_struct *p, int prio)
+{
+	task_setprio(p, prio);
+}
 extern void rt_mutex_adjust_pi(struct task_struct *p);
+static inline bool tsk_is_pi_blocked(struct task_struct *tsk)
+{
+	return tsk->pi_blocked_on != NULL;
+}
 #else
 static inline int rt_mutex_getprio(struct task_struct *p)
 {
 	return p->normal_prio;
 }
 # define rt_mutex_adjust_pi(p)		do { } while (0)
+static inline bool tsk_is_pi_blocked(struct task_struct *tsk)
+{
+	return false;
+}
 #endif
 
 extern bool yield_to(struct task_struct *p, bool preempt);
@@ -2090,6 +2184,8 @@ extern struct pid_namespace init_pid_ns;
 extern struct task_struct *find_task_by_vpid(pid_t nr);
 extern struct task_struct *find_task_by_pid_ns(pid_t nr,
 		struct pid_namespace *ns);
+extern struct task_struct *find_task_by_pid_task_ns(pid_t vnr,
+		struct task_struct *t);
 
 extern void __set_special_pids(struct pid *pid);
 
@@ -2109,6 +2205,7 @@ extern void xtime_update(unsigned long ticks);
 
 extern int wake_up_state(struct task_struct *tsk, unsigned int state);
 extern int wake_up_process(struct task_struct *tsk);
+extern int wake_up_lock_sleeper(struct task_struct * tsk);
 extern void wake_up_new_task(struct task_struct *tsk);
 #ifdef CONFIG_SMP
  extern void kick_process(struct task_struct *tsk);
@@ -2198,11 +2295,23 @@ extern struct mm_struct * mm_alloc(void);
 
 /* mmdrop drops the mm and the page tables */
 extern void __mmdrop(struct mm_struct *);
+
 static inline void mmdrop(struct mm_struct * mm)
 {
 	if (unlikely(atomic_dec_and_test(&mm->mm_count)))
 		__mmdrop(mm);
 }
+
+#ifdef CONFIG_PREEMPT_RT_BASE
+extern void __mmdrop_delayed(struct rcu_head *rhp);
+static inline void mmdrop_delayed(struct mm_struct *mm)
+{
+	if (atomic_dec_and_test(&mm->mm_count))
+		call_rcu(&mm->delayed_drop, __mmdrop_delayed);
+}
+#else
+# define mmdrop_delayed(mm)	mmdrop(mm)
+#endif
 
 /* mmput gets rid of the mappings and all user-space */
 extern void mmput(struct mm_struct *);
@@ -2509,7 +2618,7 @@ extern int _cond_resched(void);
 
 extern int __cond_resched_lock(spinlock_t *lock);
 
-#ifdef CONFIG_PREEMPT
+#if defined(CONFIG_PREEMPT) && !defined(CONFIG_PREEMPT_RT_FULL)
 #define PREEMPT_LOCK_OFFSET	PREEMPT_OFFSET
 #else
 #define PREEMPT_LOCK_OFFSET	0
@@ -2520,12 +2629,16 @@ extern int __cond_resched_lock(spinlock_t *lock);
 	__cond_resched_lock(lock);				\
 })
 
+#ifndef CONFIG_PREEMPT_RT_FULL
 extern int __cond_resched_softirq(void);
 
 #define cond_resched_softirq() ({					\
 	__might_sleep(__FILE__, __LINE__, SOFTIRQ_DISABLE_OFFSET);	\
 	__cond_resched_softirq();					\
 })
+#else
+# define cond_resched_softirq()		cond_resched()
+#endif
 
 /*
  * Does a critical section need to be broken due to another
@@ -2549,7 +2662,7 @@ void thread_group_cputimer(struct task_struct *tsk, struct task_cputime *times);
 
 static inline void thread_group_cputime_init(struct signal_struct *sig)
 {
-	spin_lock_init(&sig->cputimer.lock);
+	raw_spin_lock_init(&sig->cputimer.lock);
 }
 
 /*
@@ -2567,6 +2680,11 @@ extern void signal_wake_up(struct task_struct *t, int resume_stopped);
  * Wrappers for p->thread_info->cpu access. No-op on UP.
  */
 #ifdef CONFIG_SMP
+
+#ifdef CONFIG_CHRONOS
+int prio_resched_cpu(int cpu, int prio);
+void inc_abort_count(struct task_struct *p);
+#endif
 
 static inline unsigned int task_cpu(const struct task_struct *p)
 {
@@ -2587,6 +2705,26 @@ static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
 }
 
 #endif /* CONFIG_SMP */
+
+static inline int __migrate_disabled(struct task_struct *p)
+{
+#ifdef CONFIG_PREEMPT_RT_FULL
+	return p->migrate_disable;
+#else
+	return 0;
+#endif
+}
+
+/* Future-safe accessor for struct task_struct's cpus_allowed. */
+static inline const struct cpumask *tsk_cpus_allowed(struct task_struct *p)
+{
+#ifdef CONFIG_PREEMPT_RT_FULL
+	if (p->migrate_disable)
+		return cpumask_of(task_cpu(p));
+#endif
+
+	return &p->cpus_allowed;
+}
 
 extern long sched_setaffinity(pid_t pid, const struct cpumask *new_mask);
 extern long sched_getaffinity(pid_t pid, struct cpumask *mask);

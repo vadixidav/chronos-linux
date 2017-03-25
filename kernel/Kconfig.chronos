@@ -1,0 +1,55 @@
+menu "ChronOS Real-time Scheduling"
+
+#This is selected by all the architectures ChronOS supports
+config HAVE_CHRONOS_ARCH_SUPPORT
+	bool
+
+config CHRONOS
+	bool "ChronOS real-time scheduling system"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && SMP && PREEMPT_RT_FULL && PREEMPT_RCU && RT_MUTEXES && HIGH_RES_TIMERS && NO_HZ && !RT_GROUP_SCHED
+	default y
+	help
+	  Enable or disable the ChronOS real-time scheduling subsystem.
+
+config CHRONOS_SCHED_STATS
+	bool "Scheduling statistics for real-time schedulers"
+	depends on CHRONOS
+	default y
+	help
+	  Enable or disable scheduling statistics in /proc/chronos/stats
+
+config CHRONOS_MUTEX_STATS
+	bool "Locking statistics for scheduler-managed locks"
+	depends on CHRONOS
+	default y
+	help
+	  Enable or disable real-time locking statistics in /proc/chronos/mutex
+
+config DEBUG_CHRONOS
+	bool "ChronOS debugging messages in kernel log"
+	depends on CHRONOS
+	default n
+	help
+	  Enable or disable kernel messages which can help debug ChronOS issues
+
+#The following messages explain the problem(s) when ChronOS cannot be enabled
+comment "ChronOS is not currently supported on your architecture"
+	depends on !HAVE_CHRONOS_ARCH_SUPPORT
+comment "ChronOS is disabled because the following config dependencies are not met:"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && !(HAVE_CHRONOS_ARCH_SUPPORT && PREEMPT_RT_FULL && PREEMPT_RCU && RT_MUTEXES && HIGH_RES_TIMERS && NO_HZ && !RT_GROUP_SCHED)
+comment "SMP"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && !SMP
+comment "PREEMPT_RT_FULL"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && !PREEMPT_RT_FULL
+comment "PREEMPT_RCU"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && !PREEMPT_RCU
+comment "RT_MUTEXES"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && !RT_MUTEXES
+comment "HIGH_RES_TIMERS"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && !HIGH_RES_TIMERS
+comment "NO_HZ"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && !NO_HZ
+comment "!RT_GROUP_SCHED"
+	depends on HAVE_CHRONOS_ARCH_SUPPORT && RT_GROUP_SCHED
+
+endmenu

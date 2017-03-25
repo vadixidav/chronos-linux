@@ -2,15 +2,16 @@
 # Makefile for the linux kernel.
 #
 
-obj-y     = sched.o fork.o exec_domain.o panic.o printk.o \
+obj-y     = sched.o \
+	    fork.o exec_domain.o panic.o printk.o \
 	    cpu.o exit.o itimer.o time.o softirq.o resource.o \
 	    sysctl.o sysctl_binary.o capability.o ptrace.o timer.o user.o \
 	    signal.o sys.o kmod.o workqueue.o pid.o \
 	    rcupdate.o extable.o params.o posix-timers.o \
-	    kthread.o wait.o kfifo.o sys_ni.o posix-cpu-timers.o mutex.o \
+	    kthread.o wait.o kfifo.o sys_ni.o posix-cpu-timers.o \
 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
 	    notifier.o ksysfs.o pm_qos_params.o sched_clock.o cred.o \
-	    async.o range.o jump_label.o
+	    async.o range.o wait-simple.o jump_label.o
 obj-y += groups.o
 
 ifdef CONFIG_FUNCTION_TRACER
@@ -24,12 +25,19 @@ CFLAGS_REMOVE_sched_clock.o = -pg
 CFLAGS_REMOVE_irq_work.o = -pg
 endif
 
+obj-$(CONFIG_CHRONOS) += chronos_util.o
+obj-$(CONFIG_CHRONOS) += chronos_sched.o
+obj-$(CONFIG_CHRONOS) += chronos_global.o
+
 obj-$(CONFIG_FREEZER) += freezer.o
 obj-$(CONFIG_PROFILING) += profile.o
 obj-$(CONFIG_SYSCTL_SYSCALL_CHECK) += sysctl_check.o
 obj-$(CONFIG_STACKTRACE) += stacktrace.o
 obj-y += time/
+ifneq ($(CONFIG_PREEMPT_RT_FULL),y)
+obj-y += mutex.o
 obj-$(CONFIG_DEBUG_MUTEXES) += mutex-debug.o
+endif
 obj-$(CONFIG_LOCKDEP) += lockdep.o
 ifeq ($(CONFIG_PROC_FS),y)
 obj-$(CONFIG_LOCKDEP) += lockdep_proc.o
@@ -41,6 +49,7 @@ endif
 obj-$(CONFIG_RT_MUTEXES) += rtmutex.o
 obj-$(CONFIG_DEBUG_RT_MUTEXES) += rtmutex-debug.o
 obj-$(CONFIG_RT_MUTEX_TESTER) += rtmutex-tester.o
+obj-$(CONFIG_PREEMPT_RT_FULL) += rt.o
 obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
 obj-$(CONFIG_SMP) += smp.o
 ifneq ($(CONFIG_SMP),y)
