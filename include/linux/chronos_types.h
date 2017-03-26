@@ -44,6 +44,7 @@
 /* Scheduler - behaviors for each flag may or may not be defined */
 #define SCHED_RT_FIFO 			0x00
 #define SCHED_RT_RMA 			0x01
+#define SCHED_RT_EDF			0x02
 #define SCHED_RT_FIFO_RA		0x07
 #define SCHED_RT_GFIFO			0x80
 #define SCHED_RT_GRMA			0x81
