@@ -203,23 +203,6 @@ inline unsigned long timespec_to_long(const struct timespec *ts)
 	return ts->tv_sec*MILLION + ts->tv_nsec/THOUSAND;
 }
 
-static inline long calc_left(struct rt_info *task)
-{
-	long left = 0;
-
-	left = task->exec_time - task_time(task);
-	return (left <= 0) ? 1 : left;
-}
-
-static inline long update_left(struct rt_info *task)
-{
-	long left = 0;
-
-	left = calc_left(task);
-	long_to_timespec(left, &(task->left));
-	return left;
-}
-
 static void abort_deadlock(struct rt_info *task)
 {
 	int worst_ivd = calc_left(task)/task->max_util;
