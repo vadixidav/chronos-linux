@@ -210,6 +210,7 @@ long calc_left(struct rt_info *task)
 	left = task->exec_time - task_time(task);
 	return (left <= 0) ? 1 : left;
 }
+EXPORT_SYMBOL(calc_left);
 
 long update_left(struct rt_info *task)
 {
@@ -219,6 +220,7 @@ long update_left(struct rt_info *task)
 	long_to_timespec(left, &(task->left));
 	return left;
 }
+EXPORT_SYMBOL(update_left);
 
 static void abort_deadlock(struct rt_info *task)
 {
@@ -297,6 +299,7 @@ void abort_thread(struct rt_info *r)
 	/* Increment the count of segments aborted */
 	inc_abort_count(p);
 }
+EXPORT_SYMBOL(abort_thread);
 
 long livd(struct rt_info *task, int calc_dep, int flags)
 {
