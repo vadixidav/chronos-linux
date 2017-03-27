@@ -11,6 +11,7 @@
 #include <linux/module.h>
 #include <linux/chronos_types.h>
 #include <linux/chronos_sched.h>
+#include <linux/chronos_util.h>
 #include <linux/list.h>
 
 struct rt_info* sched_edf(struct list_head *head, int flags)
