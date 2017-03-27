@@ -154,6 +154,23 @@ static inline int check_task_abort_nohua(struct rt_info *task)
 	return check_task_aborted(task) && (task->local_ivd == -1);
 }
 
+static inline long calc_left(struct rt_info *task)
+{
+	long left = 0;
+
+	left = task->exec_time - task_time(task);
+	return (left <= 0) ? 1 : left;
+}
+
+static inline long update_left(struct rt_info *task)
+{
+	long left = 0;
+
+	left = calc_left(task);
+	long_to_timespec(left, &(task->left));
+	return left;
+}
+
 /*Calculate the inverse value density of a task
  *
  *	Parameters:

@@ -19,6 +19,7 @@ struct rt_info* sched_edf(struct list_head *head, int flags)
 	struct list_head *curr;
 	struct rt_info *best_task = local_task(head->next), *curr_task;
 	struct timespec btspec, ctspec, currtime = CURRENT_TIME;
+	update_left(best_task);
 	sub_ts(&best_task->deadline, &best_task->left, &btspec);
 	list_for_each(curr, head) {
 		curr_task = local_task(curr);
@@ -28,6 +29,7 @@ struct rt_info* sched_edf(struct list_head *head, int flags)
 			abort_thread(curr_task);
 			return curr_task;
 		} else {
+			update_left(curr_task);
 			sub_ts(&curr_task->deadline, &curr_task->left, &ctspec);
 			if (compare_ts(&ctspec, &btspec)) {
 				btspec = ctspec;
