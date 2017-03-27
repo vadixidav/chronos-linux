@@ -17,14 +17,21 @@ struct rt_info* sched_edf(struct list_head *head, int flags)
 {
 	struct list_head *curr;
 	struct rt_info *best_task = local_task(head->next), *curr_task;
-	struct timespec btspec, ctspec;
+	struct timespec btspec, ctspec, currtime = CURRENT_TIME;
 	sub_ts(&best_task->deadline, &best_task->left, &btspec);
 	list_for_each(curr, head) {
 		curr_task = local_task(curr);
-		sub_ts(&curr_task->deadline, &curr_task->left, &ctspec);
-		if (compare_ts(&ctspec, &btspec)) {
-			btspec = ctspec;
-			best_task = curr_task;
+		if (check_task_aborted(curr_task)) {
+			return curr_task;
+		} else if (compare_ts(&curr_task->deadline, &currtime)) {
+			abort_thread(curr_task);
+			return curr_task;
+		} else {
+			sub_ts(&curr_task->deadline, &curr_task->left, &ctspec);
+			if (compare_ts(&ctspec, &btspec)) {
+				btspec = ctspec;
+				best_task = curr_task;
+			}
 		}
 	}
 
