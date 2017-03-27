@@ -35,7 +35,6 @@ struct rt_info* sched_hvdf(struct list_head *head, int flags)
 			return curr_task;
 		default:
 			if (curr_task->local_ivd < best_task->local_ivd) {
-				btspec = ctspec;
 				best_task = curr_task;
 			}
 			break;
