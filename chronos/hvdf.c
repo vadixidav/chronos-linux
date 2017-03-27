@@ -14,55 +14,59 @@
 #include <linux/chronos_util.h>
 #include <linux/list.h>
 
-struct rt_info* sched_edf(struct list_head *head, int flags)
+struct rt_info* sched_hvdf(struct list_head *head, int flags)
 {
 	struct list_head *curr;
 	struct rt_info *best_task = local_task(head->next), *curr_task;
-	struct timespec btspec, ctspec, currtime = CURRENT_TIME;
-	update_left(best_task);
-	sub_ts(&best_task->deadline, &best_task->left, &btspec);
+	livd(best_task, 0, flags);
 	list_for_each(curr, head) {
 		curr_task = local_task(curr);
 		if (check_task_aborted(curr_task)) {
 			return curr_task;
-		} else if (compare_ts(&curr_task->deadline, &currtime)) {
+		}
+
+		livd(curr_task, 0, flags);
+		switch (curr_task->local_ivd) {
+		case -1:
 			abort_thread(curr_task);
+			// Fall through into returning curr_task.
+		case -2:
+		case LONG_MAX:
 			return curr_task;
-		} else {
-			update_left(curr_task);
-			sub_ts(&curr_task->deadline, &curr_task->left, &ctspec);
-			if (compare_ts(&ctspec, &btspec)) {
+		default:
+			if (curr_task->local_ivd < best_task->local_ivd) {
 				btspec = ctspec;
 				best_task = curr_task;
 			}
+			break;
 		}
 	}
 
 	return best_task;
 }
 
-struct rt_sched_local edf = {
-	.base.name = "EDF",
-	.base.id = SCHED_RT_EDF,
+struct rt_sched_local hvdf = {
+	.base.name = "HVDF",
+	.base.id = SCHED_RT_HVDF,
 	.flags = 0,
-	.schedule = sched_edf,
+	.schedule = sched_hvdf,
 	.base.sort_key = SORT_KEY_PERIOD,
-	.base.list = LIST_HEAD_INIT(edf.base.list)
+	.base.list = LIST_HEAD_INIT(hvdf.base.list)
 };
 
-static int __init edf_init(void)
+static int __init hvdf_init(void)
 {
-	return add_local_scheduler(&edf);
+	return add_local_scheduler(&hvdf);
 }
-module_init(edf_init);
+module_init(hvdf_init);
 
-static void __exit edf_exit(void)
+static void __exit hvdf_exit(void)
 {
-	remove_local_scheduler(&edf);
+	remove_local_scheduler(&hvdf);
 }
-module_exit(edf_exit);
+module_exit(hvdf_exit);
 
-MODULE_DESCRIPTION("EDF Scheduling Module for ChronOS");
+MODULE_DESCRIPTION("HVDF Scheduling Module for ChronOS");
 MODULE_AUTHOR("Geordon Worley <vadixidav@gmail.com>");
 MODULE_LICENSE("GPL");
 

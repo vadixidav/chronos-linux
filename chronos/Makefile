@@ -6,6 +6,7 @@ ifeq ($(CONFIG_CHRONOS),y)
 obj-m += fifo_ra.o
 obj-m += rma.o
 obj-m += edf.o
+obj-m += hvdf.o
 obj-m += gfifo.o
 obj-m += grma.o
 obj-m += abort_shmem.o
