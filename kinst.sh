@@ -7,11 +7,6 @@ THREADS=`cat /proc/cpuinfo | grep processor | wc -l`
 
 echo "Building kernel ${VER} with ${CC} on ${THREADS} threads"
 
-if [ $(/usr/bin/id -u) -ne 0 ]; then
-	echo "Please run this script as root."
-	exit 2
-fi
-
 # Determine OS platform (and, if applicable, Linux distribution)
 # Courtesy of http://legroom.net/2010/05/05/generic-method-determine-linux-or-unix-distribution-name
 detect_os() {
