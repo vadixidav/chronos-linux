@@ -54,11 +54,8 @@ extern int (*kernel_clear_task_aborting) (pid_t pid);
  */
 static inline int compare_ts(struct timespec *t1, struct timespec *t2)
 {
-	if (t1->tv_sec < t2->tv_sec || (t1->tv_sec == t2->tv_sec &&
-			t1->tv_nsec < t2->tv_nsec))
-		return 1;
-	else
-		return 0;
+	return t1->tv_sec < t2->tv_sec || (t1->tv_sec == t2->tv_sec &&
+			t1->tv_nsec < t2->tv_nsec);
 }
 
 #define lower_period(t1, t2) compare_ts(t1, t2)
