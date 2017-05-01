@@ -16,29 +16,12 @@
 
 struct rt_info* sched_edf(struct list_head *head, int flags)
 {
-	struct list_head *curr;
-	struct rt_info *best_task = local_task(head->next), *curr_task;
-	struct timespec btspec, ctspec, currtime = CURRENT_TIME;
-	update_left(best_task);
-	sub_ts(&best_task->deadline, &best_task->left, &btspec);
-	list_for_each(curr, head) {
-		curr_task = local_task(curr);
-		if (check_task_aborted(curr_task)) {
-			return curr_task;
-		} else if (compare_ts(&curr_task->deadline, &currtime)) {
-			abort_thread(curr_task);
-			return curr_task;
-		} else {
-			update_left(curr_task);
-			sub_ts(&curr_task->deadline, &curr_task->left, &ctspec);
-			if (compare_ts(&ctspec, &btspec)) {
-				btspec = ctspec;
-				best_task = curr_task;
-			}
-		}
-	}
+	struct rt_info *best = local_task(head->next);
 
-	return best_task;
+	if(flags & SCHED_FLAG_PI)
+		best = get_pi_task(best, head, flags);
+
+	return best;
 }
 
 struct rt_sched_local edf = {
@@ -46,7 +29,7 @@ struct rt_sched_local edf = {
 	.base.id = SCHED_RT_EDF,
 	.flags = 0,
 	.schedule = sched_edf,
-	.base.sort_key = SORT_KEY_PERIOD,
+	.base.sort_key = SORT_KEY_DEADLINE,
 	.base.list = LIST_HEAD_INIT(edf.base.list)
 };
 
