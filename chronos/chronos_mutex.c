@@ -108,6 +108,9 @@ static int init_rt_resource(struct mutex_data __user *mutexreq)
 
 	m->mutex = mutexreq;
 	m->owner_t = NULL;
+	// TODO: This is bad because this isn't the real maximum tv_sec, but its probably fine.
+	m->period_floor.tv_sec = 32767;
+	m->period_floor.tv_nsec = 0;
 
 	if(!process) {
 		process = kmalloc(sizeof(struct process_mutex_list), GFP_KERNEL);
@@ -206,6 +209,11 @@ static int request_rt_resource(struct mutex_data __user *mutexreq)
 
 	mutexreq->owner = current->pid;
 	m->owner_t = r;
+	// If the task's period is lower than the period floor of the mutex.
+	if (compare_ts(&r->period, &m->period_floor)) {
+		// Lower the mutex's period floor to this new minimum period.
+		m->period_floor = r->period;
+	}
 	r->requested_resource = NULL;
 
 	return ret;

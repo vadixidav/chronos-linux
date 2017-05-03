@@ -46,6 +46,8 @@
 #define SCHED_RT_RMA 			0x01
 #define SCHED_RT_EDF			0x02
 #define SCHED_RT_HVDF			0x03
+#define SCHED_RT_RMA_ICPP		0x04
+#define SCHED_RT_RMA_OCPP		0x05
 #define SCHED_RT_FIFO_RA		0x07
 #define SCHED_RT_GFIFO			0x80
 #define SCHED_RT_GRMA			0x81
@@ -125,6 +127,8 @@ struct mutex_head {
 	struct list_head list;
 	struct rt_info *owner_t;
 	struct mutex_data *mutex;
+	// Stores the lowest period of tasks that lock this.
+	struct timespec period_floor;
 	unsigned long id;
 };
 
