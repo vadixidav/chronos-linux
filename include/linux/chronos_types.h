@@ -189,6 +189,8 @@ struct rt_info {
 	struct mutex_head *requested_resource;
 	struct rt_info *dep;
 
+	struct timespec period_floor;
+
 	/* DAG used by x-GUA class of algorithms */
 	struct rt_graph graph;
 
