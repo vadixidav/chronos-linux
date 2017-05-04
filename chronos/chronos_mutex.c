@@ -67,7 +67,11 @@ static struct process_mutex_list * find_by_tgid(pid_t pid)
 
 struct list_head * get_current_task_mutex_list(pid_t tgid)
 {
-	return &find_by_tgid(tgid)->m_list;
+	struct process_mutex_list * pmlist = find_by_tgid(tgid);
+	if (pmlist) {
+		return &pmlist->m_list;
+	}
+	return NULL;
 }
 EXPORT_SYMBOL(get_current_task_mutex_list);
 

@@ -17,14 +17,17 @@ struct rt_info* sched_rma_icpp(struct list_head *head, int flags)
 		curr_task->period_floor = curr_task->period;
 	}
 
-	// Iterate through every mutex of the process.
-	list_for_each_entry(curr_mutex, mutex_header_list, list) {
-		// If the mutex has an owner.
-		if (curr_mutex->owner_t) {
-			// If the mutex's period_floor is lower than the period floor of the process.
-			if (compare_ts(&curr_mutex->period_floor, &curr_mutex->owner_t->period_floor)) {
-				// Lower the process' period floor to this new minimum period.
-				curr_mutex->owner_t->period_floor = curr_mutex->period_floor;
+	// Check if there were any mutexes.
+	if (mutex_header_list) {
+		// Iterate through every mutex of the process.
+		list_for_each_entry(curr_mutex, mutex_header_list, list) {
+			// If the mutex has an owner.
+			if (curr_mutex->owner_t) {
+				// If the mutex's period_floor is lower than the period floor of the process.
+				if (compare_ts(&curr_mutex->period_floor, &curr_mutex->owner_t->period_floor)) {
+					// Lower the process' period floor to this new minimum period.
+					curr_mutex->owner_t->period_floor = curr_mutex->period_floor;
+				}
 			}
 		}
 	}
