@@ -4,13 +4,13 @@
 #include <linux/chronos_util.h>
 #include <linux/list.h>
 
-struct list_head * get_current_task_mutex_list();
+struct list_head * get_current_task_mutex_list(pid_t tgid);
 
 struct rt_info* sched_rma_icpp(struct list_head *head, int flags)
 {
 	struct rt_info *best_task = local_task(head->next), *curr_task;
 	struct mutex_head *curr_mutex;
-	struct list_head *mutex_header_list = get_current_task_mutex_list();
+	struct list_head *mutex_header_list = get_current_task_mutex_list(task_of_rtinfo(best_task));
 
 	// Iterate through every task in the local list.
 	list_for_each_entry(curr_task, head, task_list[LOCAL_LIST]) {
