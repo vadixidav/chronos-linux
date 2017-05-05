@@ -165,6 +165,7 @@ static int destroy_rt_resource(struct mutex_data __user *mutexreq)
 	list_del(&m->list);
 	empty = list_empty(&process->m_list);
 	write_unlock(&process->lock);
+	futex_wake(&(mutexreq->value));
 	kfree(m);
 
 	if(empty) {
@@ -185,6 +186,10 @@ static int request_rt_resource(struct mutex_data __user *mutexreq)
 {
 	int c, ret = 0;
 	struct rt_info *r = &current->rtinfo;
+	struct mutex_head *curr_mutex;
+	u32 *waiting_on;
+	u32 old_value;
+	struct process_mutex_list *process;
 	struct mutex_head *m;
 
 	/* This is for reentrant locking */
@@ -193,9 +198,35 @@ static int request_rt_resource(struct mutex_data __user *mutexreq)
 	else if(check_task_abort_nohua(r))
 		return -EOWNERDEAD;
 
-	m = find_mutex(mutexreq, current->tgid);
+	process = find_by_tgid(current->tgid);
+	if (!process)
+		return -EINVAL;
+	m = find_in_process(mutexreq, process);
 	if(!m)
 		return -EINVAL;
+
+	// Wait until all locked mutexes have a lower priority ceiling.
+	while (1) {
+		write_lock(&process->lock);
+		// We succeed when we don't find anything.
+		waiting_on = NULL;
+		// Iterate through every mutex of the process.
+		list_for_each_entry(curr_mutex, &process->m_list, list) {
+			// If the mutex has an owner and its period floor is higher priority than this task.
+			if (curr_mutex->owner_t && compare_ts(&curr_mutex->period_floor, &r->period)) {
+				// It isn't allowed to lock it.
+				waiting_on = &curr_mutex->mutex->value;
+				old_value = *waiting_on;
+				break;
+			}
+		}
+		if (waiting_on) {
+			write_unlock(&process->lock);
+			futex_wait(waiting_on, old_value);
+		} else {
+			break;
+		}
+	}
 
 	/* Notify that we are requesting the resource and call the scheduler */
 	r->requested_resource = m;
@@ -226,15 +257,22 @@ static int request_rt_resource(struct mutex_data __user *mutexreq)
 	}
 	r->requested_resource = NULL;
 
+	write_unlock(&process->lock);
+
 	return ret;
 }
 
 static int release_rt_resource(struct mutex_data __user *mutexreq)
 {
-	struct mutex_head *m = find_mutex(mutexreq, current->tgid);
-
+	struct process_mutex_list *process = find_by_tgid(current->tgid);
+	struct mutex_head *m;
+	if (!process)
+		return -EINVAL;
+	m = find_in_process(mutexreq, process);
 	if(!m)
 		return -EINVAL;
+
+	write_lock(&process->lock);
 
 	if(mutexreq->owner != current->pid)
 		return -EACCES;
@@ -244,7 +282,10 @@ static int release_rt_resource(struct mutex_data __user *mutexreq)
 
 	if(cmpxchg(&(mutexreq->value), 1, 0) == 2) {
 		mutexreq->value = 0;
+		write_unlock(&process->lock);
 		futex_wake(&(mutexreq->value));
+	} else {
+		write_unlock(&process->lock);
 	}
 
 	force_sched_event(current);
