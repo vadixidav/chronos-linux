@@ -37,6 +37,8 @@
  * since we have to assume userspace is unreliable.
  */
 
+//#define OCPP_ON
+
 struct process_mutex_list {
 	pid_t tgid;
 	struct list_head p_list;
@@ -201,10 +203,8 @@ static int request_rt_resource(struct mutex_data __user *mutexreq)
 	process = find_by_tgid(current->tgid);
 	if (!process)
 		return -EINVAL;
-	m = find_in_process(mutexreq, process);
-	if(!m)
-		return -EINVAL;
 
+#ifdef OCPP_ON
 	// Wait until all locked mutexes have a lower priority ceiling.
 	while (1) {
 		write_lock(&process->lock);
@@ -227,6 +227,15 @@ static int request_rt_resource(struct mutex_data __user *mutexreq)
 			break;
 		}
 	}
+#else
+	write_lock(&process->lock);
+#endif
+
+	m = find_in_process(mutexreq, process);
+	if(!m) {
+		write_unlock(&process->lock);
+		return -EINVAL;
+	}
 
 	/* Notify that we are requesting the resource and call the scheduler */
 	r->requested_resource = m;
@@ -234,8 +243,10 @@ static int request_rt_resource(struct mutex_data __user *mutexreq)
 	schedule();
 
 	/* Our request may have been cancelled for some reason */
-	if(r->requested_resource != m)
+	if(r->requested_resource != m) {
+		write_unlock(&process->lock);
 		return -EOWNERDEAD;
+	}
 
 	/* Try to take the resource */
 	if((c = cmpxchg(&(mutexreq->value), 0, 1)) != 0) {
@@ -268,14 +279,19 @@ static int release_rt_resource(struct mutex_data __user *mutexreq)
 	struct mutex_head *m;
 	if (!process)
 		return -EINVAL;
-	m = find_in_process(mutexreq, process);
-	if(!m)
-		return -EINVAL;
 
 	write_lock(&process->lock);
 
-	if(mutexreq->owner != current->pid)
+	m = find_in_process(mutexreq, process);
+	if(!m) {
+		write_unlock(&process->lock);
+		return -EINVAL;
+	}
+
+	if(mutexreq->owner != current->pid) {
+		write_unlock(&process->lock);
 		return -EACCES;
+	}
 
 	mutexreq->owner = 0;
 	m->owner_t = NULL;
