@@ -37,7 +37,7 @@
  * since we have to assume userspace is unreliable.
  */
 
-//#define OCPP_ON
+#define OCPP_ON
 
 struct process_mutex_list {
 	pid_t tgid;
